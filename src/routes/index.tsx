@@ -37,7 +37,7 @@ import {
   integrateProfileMWh,
   parseDate,
 } from "@/lib/utiliq-engine";
-import { DEMO_NOW } from "@/lib/utiliq-demo-data";
+import { nowIso } from "@/lib/clock";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
@@ -95,7 +95,7 @@ function CommandCenterPage() {
   const impact = useMemo(() => calculateImpact(state), [state]);
   const forecast = useMemo(() => buildEnergyForecast(state), [state]);
   const alerts = useMemo(() => collectAlerts(state), [state]);
-  const now = parseDate(DEMO_NOW);
+  const now = parseDate(nowIso());
   const waitingIds = state.testItems
     .filter((item) => item.status === "waiting" || item.status === "delayed")
     .map((item) => item.id);
@@ -121,7 +121,7 @@ function CommandCenterPage() {
         <div className="px-2">
           <h1 className="text-sm font-semibold uppercase tracking-[0.14em]">Command Center</h1>
           <p className="text-[11px] text-muted-foreground">
-            Production-ready hardware test planning · {formatDateTime(DEMO_NOW)}
+            Production-ready hardware test planning · {formatDateTime(nowIso())}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">

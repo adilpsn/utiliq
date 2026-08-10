@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { useUtiliqStore } from "@/lib/utiliq-store";
-import { DEMO_NOW } from "@/lib/utiliq-demo-data";
+import { nowIso } from "@/lib/clock";
 import {
   assignmentDurationMinutes,
   calculateImpact,
@@ -245,7 +245,7 @@ function SchedulePage() {
   const [editingBench, setEditingBench] = useState<PlantResource | null>(null);
 
   const impact = useMemo(() => calculateImpact(state), [state]);
-  const now = parseDate(DEMO_NOW);
+  const now = parseDate(nowIso());
   const start = startOfDay(now);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
 

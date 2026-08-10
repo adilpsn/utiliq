@@ -14,6 +14,7 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { UtiliqStoreProvider } from "@/lib/utiliq-store";
+import { TelemetryProvider } from "@/lib/telemetry/live-store";
 import { Toaster } from "sonner";
 
 function NotFoundComponent() {
@@ -124,17 +125,19 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <UtiliqStoreProvider>
-        <SidebarProvider>
-          <div className="flex min-h-screen w-full bg-background">
-            <AppSidebar />
-            <div className="flex flex-1 flex-col">
-              <main className="flex-1">
-                <Outlet />
-              </main>
+        <TelemetryProvider>
+          <SidebarProvider>
+            <div className="flex min-h-screen w-full bg-background">
+              <AppSidebar />
+              <div className="flex flex-1 flex-col">
+                <main className="flex-1">
+                  <Outlet />
+                </main>
+              </div>
             </div>
-          </div>
-          <Toaster position="bottom-right" theme="dark" richColors />
-        </SidebarProvider>
+            <Toaster position="bottom-right" theme="dark" richColors />
+          </SidebarProvider>
+        </TelemetryProvider>
       </UtiliqStoreProvider>
     </QueryClientProvider>
   );

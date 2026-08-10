@@ -1,5 +1,5 @@
 import { addMinutes, format, startOfDay } from "date-fns";
-import { DEMO_NOW } from "./utiliq-demo-data";
+import { nowIso } from "./clock";
 import { gridFlowAt, parseDate } from "./utiliq-engine";
 import type { EnergyConstraint, PricePoint, UtiliqState } from "./utiliq-types";
 
@@ -78,7 +78,7 @@ export function interpolatePrice(
 /** Hourly spot-export price curve for the day. */
 export function buildSpotCurve(
   constraint: EnergyConstraint,
-  day = parseDate(DEMO_NOW),
+  day = parseDate(nowIso()),
 ): { hour: number; time: string; spotPrice: number }[] {
   const base = startOfDay(day);
   return Array.from({ length: HOURS_IN_DAY }, (_, hour) => {
@@ -112,7 +112,7 @@ function optimalRevenue(
   return revenue;
 }
 
-export function analyzeSpotMarket(state: UtiliqState, day = parseDate(DEMO_NOW)): SpotAnalysis {
+export function analyzeSpotMarket(state: UtiliqState, day = parseDate(nowIso())): SpotAnalysis {
   const constraint = state.energyConstraint;
   const curve = buildSpotCurve(constraint, day);
   const base = startOfDay(day);

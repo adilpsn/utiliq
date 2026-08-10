@@ -1,0 +1,71 @@
+# Utiliq collector — sample topic dump
+#
+# Format is exactly what `mosquitto_sub -t '#' -v` prints:  <topic> <payload>
+# So tomorrow's real capture from 2G drops in here unmodified:
+#
+#     mosquitto_sub -h <host> -p <port> -t '#' -v -u <user> -P <pass> > 2g_topics.txt
+#     REPLAY_FILE=2g_topics.txt node collector/index.mjs
+#
+# This file is INVENTED. It exists to exercise the pipeline end-to-end before
+# the site visit, and deliberately mixes every payload shape the parser claims
+# to handle, plus deliberately unmapped and unparsable lines so the diagnostic
+# trays can be seen working. Values are in kW (the assumed unit) — a 3.4 MW CHP
+# unit on test reads 3400.
+#
+# --- assumed convention: utiliq/<site>/<zone>/<resourceId>/<measurement> -----
+
+# bare scalar, no JSON at all
+utiliq/2g/hallB/TB-01/power 3412.5
+utiliq/2g/hallB/TB-01/power 3408.1
+utiliq/2g/hallB/TB-01/power 3421.7
+
+# the common case: {"value": n}
+utiliq/2g/hallB/TB-02/power {"value": 2870.4}
+utiliq/2g/hallB/TB-02/power {"value": 2865.9}
+
+# terse gateway style, epoch-seconds timestamp
+utiliq/2g/hallC/TB-03/power {"v": 3180.2, "ts": 1786399200}
+utiliq/2g/hallC/TB-03/power {"v": 3175.8, "ts": 1786399210}
+
+# ISO-8601 timestamp with explicit UTC offset
+utiliq/2g/hallC/TB-04/power {"value": -2110.0, "timestamp": "2026-08-11T06:30:00Z", "quality": "good"}
+
+# scalar carrying its unit as a suffix
+utiliq/2g/hallC/TB-05/power 1980.5 kW
+
+# grid meter — matched by a dedicated mapping row
+utiliq/2g/yard/GRID-01/power {"value": -1400.0, "quality": "good"}
+
+# rooftop PV and auxiliaries
+utiliq/2g/roof/PV-01/power {"value": 402.3}
+utiliq/2g/roof/PV-02/power {"value": 511.8}
+utiliq/2g/hallA/COOL-01/power {"value": -905.0}
+utiliq/2g/hallA/AIR-01/power {"value": -610.2}
+utiliq/2g/yard/FUEL-01/power {"value": -84.0}
+utiliq/2g/hallB/LB-01/power {"value": -1805.5}
+utiliq/2g/hallA/BAT-01/power {"value": 215.0}
+
+# nested container carrying several measurements in one message —
+# parsed into TB-01/power and TB-01/temperature via the subKey mechanism
+utiliq/2g/hallB/TB-01 {"d": {"power": 3399.4, "temperature": 61.2}, "ts": 1786399260}
+
+# Sparkplug-B-ish metrics array
+spBv1.0/2G/DDATA/gateway1/TB-02 {"timestamp": 1786399270000, "metrics": [{"name": "power", "value": 2881.0, "timestamp": 1786399270000}, {"name": "temperature", "value": 58.9}]}
+
+# topic states its unit explicitly — mapped with scale 1 / 0.001 respectively
+utiliq/2g/hallB/TB-01/power_mw 3.4
+utiliq/2g/hallB/TB-02/power_kw 2869.0
+
+# temperature
+utiliq/2g/hallC/TB-03/temperature {"value": 64.8}
+
+# --- lines below are expected NOT to map: they prove nothing vanishes -------
+
+# legacy SCADA tree nobody told us about -> lands in the "unmapped" tray
+plant/legacy/scada/tag4711 42
+plant/legacy/scada/tag4712 {"value": 7.5}
+Anlage/Halle2/Pruefstand3/Wirkleistung 2450.0
+
+# non-numeric payload -> lands in the "unparsable" tray
+utiliq/2g/hallB/TB-01/status RUNNING
+utiliq/2g/hallB/TB-02/mode {"mode": "load-test", "operator": "MK"}

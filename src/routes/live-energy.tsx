@@ -18,7 +18,7 @@ import { ResourceDialog } from "@/components/ems/ResourceDialog";
 import { StatusDot, StatusLabel } from "@/components/ems/StatusDot";
 import { Button } from "@/components/ui/button";
 import { useUtiliqStore } from "@/lib/utiliq-store";
-import { DEMO_NOW } from "@/lib/utiliq-demo-data";
+import { nowIso } from "@/lib/clock";
 import {
   buildEnergyForecast,
   formatTime,
@@ -53,7 +53,7 @@ type OperationResource = PlantResource & {
 function LiveEnergyPage() {
   const { state, completeAssignment, updateResource } = useUtiliqStore();
   const [editingResource, setEditingResource] = useState<PlantResource | null>(null);
-  const now = parseDate(DEMO_NOW);
+  const now = parseDate(nowIso());
   const forecast = useMemo(() => buildEnergyForecast(state), [state]);
 
   const operationsWithoutGrid = state.resources
@@ -255,7 +255,7 @@ function LiveEnergyPage() {
         <div className="px-2">
           <h1 className="text-sm font-semibold uppercase tracking-[0.14em]">Live Energy</h1>
           <p className="text-[11px] text-muted-foreground">
-            Operations snapshot · {DEMO_NOW.replace("T", " ").slice(0, 16)}
+            Operations snapshot · {nowIso().replace("T", " ").slice(0, 16)}
           </p>
         </div>
         <div className="ml-auto grid grid-cols-3 gap-5 text-right">
@@ -389,7 +389,7 @@ function LiveEnergyPage() {
           <ul className="space-y-2.5 text-xs">
             {events.map((event, index) => (
               <li key={`${event.text}-${index}`} className="flex items-start gap-2.5">
-                <span className="font-mono text-muted-foreground">{formatTime(DEMO_NOW)}</span>
+                <span className="font-mono text-muted-foreground">{formatTime(nowIso())}</span>
                 <StatusDot
                   status={
                     event.severity === "warning"

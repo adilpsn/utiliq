@@ -31,3 +31,6 @@ dist-ssr
 *.sln
 *.sw?
 _gitlocks/
+
+# local env
+.env

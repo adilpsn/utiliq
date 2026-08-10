@@ -9,7 +9,7 @@ import {
   parseISO,
   startOfDay,
 } from "date-fns";
-import { DEMO_NOW } from "./utiliq-demo-data";
+import { nowIso } from "./clock";
 import type {
   EnergyConstraint,
   OptimizationSettings,
@@ -185,7 +185,7 @@ export function gridFlowAt(
   return testPower - constraint.facilityBaseLoadMW;
 }
 
-export function buildEnergyForecast(state: UtiliqState, day = parseDate(DEMO_NOW)) {
+export function buildEnergyForecast(state: UtiliqState, day = parseDate(nowIso())) {
   const date = startOfDay(day);
   return Array.from({ length: 24 }, (_, hour) => {
     const at = addMinutes(date, hour * 60);
@@ -304,7 +304,7 @@ export function getAssignmentWarnings(
 }
 
 function candidateSlotStarts(horizonDays = 7, incrementMinutes = 60) {
-  const now = parseDate(DEMO_NOW);
+  const now = parseDate(nowIso());
   const first = addMinutes(now, 30 - (now.getMinutes() % 30));
   const starts: Date[] = [];
   for (let day = 0; day < horizonDays; day += 1) {
@@ -395,7 +395,7 @@ function scoreSlot(
   const costPenalty = energyCost * (weights.reduceEnergyCost / 100);
   const idleMinutes = Math.max(
     0,
-    differenceInMinutes(parseDate(candidate.start), parseDate(DEMO_NOW)),
+    differenceInMinutes(parseDate(candidate.start), parseDate(nowIso())),
   );
   const benchIdlePenalty = idleMinutes * 0.03 * (weights.maximizeUtilization / 100);
   const overtimePenalty =
@@ -565,7 +565,7 @@ export function hydrateAssignmentsOnItems(state: UtiliqState) {
 }
 
 export function calculateImpact(state: UtiliqState) {
-  const horizonStart = startOfDay(parseDate(DEMO_NOW));
+  const horizonStart = startOfDay(parseDate(nowIso()));
   const horizonEnd = addDays(horizonStart, 7);
   let peakExport = 0;
   let peakImport = 0;
@@ -632,7 +632,7 @@ export function calculateImpact(state: UtiliqState) {
 }
 
 export function calculateKpis(state: UtiliqState) {
-  const now = parseDate(DEMO_NOW);
+  const now = parseDate(nowIso());
   const waiting = state.testItems.filter(
     (item) => item.status === "waiting" || item.status === "delayed",
   ).length;
@@ -689,7 +689,7 @@ export function createRecordFromAssignment(
   );
   const curtailed = Math.max(0, gridExported - state.energyConstraint.maxGridExportMW * 0.2);
   const estimatedCostImpactEUR = gridExported * 62 - energy.consumed * 126 - curtailed * 90;
-  const now = toIsoLocal(parseDate(DEMO_NOW));
+  const now = toIsoLocal(parseDate(nowIso()));
   const record: TestRecord = {
     id: `tr-${item.serialNumber.replace(/[^0-9]/g, "").slice(-5)}-${state.records.length + 1}`,
     testItemId: item.id,
@@ -731,7 +731,7 @@ export function createRecordFromAssignment(
 }
 
 export function collectAlerts(state: UtiliqState) {
-  const now = parseDate(DEMO_NOW);
+  const now = parseDate(nowIso());
   const assignmentWarnings = state.assignments.flatMap((assignment) => {
     const item = state.testItems.find((candidate) => candidate.id === assignment.testItemId);
     return (assignment.warnings ?? []).map((warning) => ({

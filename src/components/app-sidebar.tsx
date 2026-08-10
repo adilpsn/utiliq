@@ -1,5 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
+  Antenna,
   ClipboardList,
   Calendar,
   History,
@@ -10,6 +11,7 @@ import {
   LineChart,
   LayoutGrid,
 } from "lucide-react";
+import { telemetryEnabled } from "@/lib/telemetry/flag";
 import {
   Sidebar,
   SidebarContent,
@@ -24,7 +26,7 @@ import {
 } from "@/components/ui/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 
-const items = [
+const baseItems = [
   { title: "Command Center", url: "/", icon: Gauge },
   { title: "Production Queue", url: "/queue", icon: ClipboardList },
   { title: "Schedule", url: "/schedule", icon: Calendar },
@@ -36,7 +38,12 @@ const items = [
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
+// Only appears when VITE_TELEMETRY=1, so the demo build's navigation — and its
+// rendered HTML — is unchanged from clickdummy-v1.
+const telemetryItem = { title: "Telemetry", url: "/telemetry", icon: Antenna };
+
 export function AppSidebar() {
+  const items = telemetryEnabled() ? [...baseItems, telemetryItem] : baseItems;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isActive = (url: string) => (url === "/" ? pathname === "/" : pathname.startsWith(url));
 
@@ -55,7 +62,11 @@ export function AppSidebar() {
             className="hidden h-8 w-8 shrink-0 object-contain dark:block"
           />
           <div className="leading-none group-data-[collapsible=icon]:hidden">
-            <img src="/utiliq-word-light.png" alt="Utiliq" className="h-5 object-contain dark:hidden" />
+            <img
+              src="/utiliq-word-light.png"
+              alt="Utiliq"
+              className="h-5 object-contain dark:hidden"
+            />
             <img
               src="/utiliq-word-dark.png"
               alt="Utiliq"
