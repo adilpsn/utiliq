@@ -34,3 +34,17 @@ _gitlocks/
 
 # local env
 .env
+
+# --- added for GitHub ---
+# local env (never commit broker credentials)
+.env
+.env.local
+.env.*.local
+
+# transfer artefacts / scratch
+*.tgz
+_to_delete/
+_gitlocks/
+
+# OS
+Thumbs.db
