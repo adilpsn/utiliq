@@ -75,6 +75,9 @@ npm run test:telemetry            # 51 assertions, no test runner needed
                      replay file ──┘                      └─► React, batched 250ms
 ```
 
+Full diagrams (system, modules, planned Pyomo optimiser):
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+
 Two design decisions worth knowing before you touch anything:
 
 **The collector is a separate process.** The browser never speaks MQTT. That
