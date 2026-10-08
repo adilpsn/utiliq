@@ -113,7 +113,13 @@ function CommandCenterPage() {
       item: state.testItems.find((candidate) => candidate.id === assignment.testItemId),
       bench: state.benches.find((candidate) => candidate.id === assignment.benchId),
     }));
-  const currentGrid = gridFlowAt(state.assignments, state.testItems, state.energyConstraint, now);
+  const currentGrid = gridFlowAt(
+    state.assignments,
+    state.testItems,
+    state.resources,
+    state.energyConstraint,
+    now,
+  );
 
   return (
     <div className="flex flex-col gap-3 p-3">

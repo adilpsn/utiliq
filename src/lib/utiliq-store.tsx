@@ -107,6 +107,7 @@ function withFreshWarnings(state: UtiliqState): UtiliqState {
       hydrated.assignments,
       hydrated.testItems,
       hydrated.benches,
+      hydrated.resources,
       hydrated.energyConstraint,
     ),
   }));

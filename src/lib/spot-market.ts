@@ -120,7 +120,7 @@ export function analyzeSpotMarket(state: UtiliqState, day = parseDate(nowIso()))
 
   const hours: SpotHour[] = curve.map(({ hour, time, spotPrice }) => {
     const at = addMinutes(base, hour * 60);
-    const flow = gridFlowAt(state.assignments, state.testItems, constraint, at);
+    const flow = gridFlowAt(state.assignments, state.testItems, state.resources, constraint, at);
     const exportMW = Math.max(0, flow);
     return {
       hour,

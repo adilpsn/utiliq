@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { differenceInMinutes, isAfter, isBefore } from "date-fns";
+import { differenceInMinutes, isBefore } from "date-fns";
 import type React from "react";
 import { useMemo, useState } from "react";
 import {
@@ -19,6 +19,7 @@ import { StatusDot, StatusLabel } from "@/components/ems/StatusDot";
 import { Button } from "@/components/ui/button";
 import { useUtiliqStore } from "@/lib/utiliq-store";
 import { nowIso } from "@/lib/clock";
+import { plantBalanceAt, resourcePowerMW } from "@/lib/energy-balance";
 import {
   buildEnergyForecast,
   formatTime,
@@ -56,83 +57,18 @@ function LiveEnergyPage() {
   const now = parseDate(nowIso());
   const forecast = useMemo(() => buildEnergyForecast(state), [state]);
 
-  const operationsWithoutGrid = state.resources
-    .filter((resource) => resource.type !== "Grid")
-    .map((resource): OperationResource => {
-      if (resource.type === "Battery") {
-        const rawPower = resource.currentMW ?? 0;
-        const displayMW =
-          resource.status === "charging"
-            ? -Math.abs(rawPower)
-            : resource.status === "discharging"
-              ? Math.abs(rawPower)
-              : rawPower;
-        return {
-          ...resource,
-          currentMW: displayMW,
-          displayMW,
-          active: Math.abs(displayMW) > 0.05,
-          status: displayMW >= 0 ? "discharging" : "charging",
-        };
-      }
-      if (resource.type !== "Test Bench")
-        return {
-          ...resource,
-          displayMW: resource.currentMW,
-          active:
-            Math.abs(resource.currentMW) > 0.05 &&
-            !["standby", "available", "inactive"].includes(resource.status),
-        };
-
-      const assignment = state.assignments.find(
-        (candidate) =>
-          candidate.benchId === resource.id &&
-          isAfter(now, parseDate(candidate.start)) &&
-          isBefore(now, parseDate(candidate.end)),
-      );
-      const item = assignment
-        ? state.testItems.find((candidate) => candidate.id === assignment.testItemId)
-        : undefined;
-      const displayMW = assignment ? powerForAssignmentAt(assignment, item, now) : 0;
-      const progress = assignment
-        ? Math.max(
-            0,
-            Math.min(
-              100,
-              Math.round(
-                (differenceInMinutes(now, parseDate(assignment.start)) /
-                  differenceInMinutes(parseDate(assignment.end), parseDate(assignment.start))) *
-                  100,
-              ),
-            ),
-          )
-        : undefined;
-      return {
-        ...resource,
-        displayMW,
-        active: Boolean(assignment),
-        assignment,
-        item,
-        progress,
-        status: assignment ? "running" : resource.status || "available",
-      };
-    });
-
-  const facilityBase: OperationResource = {
-    id: "FAC-BASE",
-    name: "Facility base load",
-    type: "Facility Load",
-    status: "running",
-    location: "Plant-wide",
-    currentMW: -state.energyConstraint.facilityBaseLoadMW,
-    displayMW: -state.energyConstraint.facilityBaseLoadMW,
-    active: true,
-  };
-  const nonGridNetPower = operationsWithoutGrid.reduce(
-    (sum, resource) => sum + resource.displayMW,
-    facilityBase.displayMW,
+  // Grid flow comes from the shared energy balance, the same function the
+  // Command Center and the scheduler use. This page only lays it out.
+  const balance = plantBalanceAt(
+    {
+      assignments: state.assignments,
+      items: state.testItems,
+      resources: state.resources,
+      constraint: state.energyConstraint,
+    },
+    now,
   );
-  const currentGrid = nonGridNetPower;
+  const currentGrid = balance.gridMW;
 
   const operations = state.resources.map((resource): OperationResource => {
     if (resource.type === "Grid")
@@ -143,21 +79,30 @@ function LiveEnergyPage() {
         active: Math.abs(currentGrid) > 0.05,
         status: currentGrid >= 0 ? "exporting" : "importing",
       };
-    const hydrated = operationsWithoutGrid.find((candidate) => candidate.id === resource.id);
-    if (hydrated) return hydrated;
+    if (resource.type === "Battery") {
+      const displayMW = resourcePowerMW(resource);
+      return {
+        ...resource,
+        currentMW: displayMW,
+        displayMW,
+        active: Math.abs(displayMW) > 0.05,
+        status: displayMW >= 0 ? "discharging" : "charging",
+      };
+    }
     if (resource.type !== "Test Bench")
       return {
         ...resource,
-        displayMW: resource.currentMW,
+        displayMW: resourcePowerMW(resource),
         active:
           Math.abs(resource.currentMW) > 0.05 &&
           !["standby", "available", "inactive"].includes(resource.status),
       };
 
+    // Same active window as powerForAssignmentAt: [start, end).
     const assignment = state.assignments.find(
       (candidate) =>
         candidate.benchId === resource.id &&
-        isAfter(now, parseDate(candidate.start)) &&
+        !isBefore(now, parseDate(candidate.start)) &&
         isBefore(now, parseDate(candidate.end)),
     );
     const item = assignment
@@ -187,6 +132,17 @@ function LiveEnergyPage() {
       status: assignment ? "running" : resource.status || "available",
     };
   });
+
+  const facilityBase: OperationResource = {
+    id: "FAC-BASE",
+    name: "Facility base load",
+    type: "Facility Load",
+    status: "running",
+    location: "Plant-wide",
+    currentMW: -balance.baseLoadMW,
+    displayMW: -balance.baseLoadMW,
+    active: true,
+  };
 
   const gridResource = operations.find((resource) => resource.type === "Grid");
   const batteryResource = operations.find((resource) => resource.type === "Battery");
@@ -219,12 +175,24 @@ function LiveEnergyPage() {
     Math.max(0, batteryPower);
   const consumerPower =
     Math.abs(consumerItems.reduce((sum, resource) => sum + resource.displayMW, 0)) +
-    state.energyConstraint.facilityBaseLoadMW +
+    balance.baseLoadMW +
     Math.max(0, currentGrid) +
     Math.max(0, -batteryPower);
   const busPower = Math.max(sourcePower, consumerPower);
 
-  const events = [
+  const gridCap =
+    currentGrid >= 0
+      ? state.energyConstraint.maxGridExportMW
+      : state.energyConstraint.maxGridImportMW;
+  const events: { severity: "ok" | "info" | "warning"; text: string }[] = [
+    ...(Math.abs(currentGrid) > gridCap * 0.9
+      ? [
+          {
+            severity: "warning" as const,
+            text: `Grid ${currentGrid >= 0 ? "export" : "import"} at ${Math.abs(currentGrid).toFixed(1)} MW is within 10% of the ${gridCap.toFixed(1)} MW cap.`,
+          },
+        ]
+      : []),
     ...operations
       .filter((resource) => resource.assignment && resource.item)
       .map((resource) => ({
@@ -263,7 +231,7 @@ function LiveEnergyPage() {
             label="Grid flow"
             value={`${Math.abs(currentGrid).toFixed(1)} MW`}
             sub={currentGrid >= 0 ? "export" : "import"}
-            warn={Math.abs(currentGrid) > state.energyConstraint.maxGridExportMW * 0.9}
+            warn={Math.abs(currentGrid) > gridCap * 0.9}
           />
           <TopMetric
             label={currentGrid >= 0 ? "Export headroom" : "Import headroom"}
@@ -466,7 +434,9 @@ function FlowCard({
       )}
     >
       <div className="flex items-center gap-3">
-        <StatusDot status={active ? (side === "consumer" ? "importing" : "running") : resource.status} />
+        <StatusDot
+          status={active ? (side === "consumer" ? "importing" : "running") : resource.status}
+        />
         <div
           className={cn(
             "flex h-9 w-9 items-center justify-center rounded-sm bg-muted text-muted-foreground",
@@ -642,7 +612,11 @@ function CenterNode({
         <div
           className={cn(
             "font-mono text-xl font-semibold",
-            value > 0 ? "text-production" : value < 0 ? "text-consumption" : "text-muted-foreground",
+            value > 0
+              ? "text-production"
+              : value < 0
+                ? "text-consumption"
+                : "text-muted-foreground",
           )}
         >
           {value > 0 ? "+" : ""}

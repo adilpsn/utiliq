@@ -10,9 +10,17 @@ import {
   startOfDay,
 } from "date-fns";
 import { nowIso } from "./clock";
+import {
+  COOLDOWN_POWER_MW,
+  SETUP_POWER_MW,
+  plantBalanceAt,
+  powerAtOffset,
+  powerForAssignmentAt,
+} from "./energy-balance";
 import type {
   EnergyConstraint,
   OptimizationSettings,
+  PlantResource,
   PowerProfilePoint,
   ScheduleAssignment,
   ScheduleWarning,
@@ -24,10 +32,8 @@ import type {
 
 export const parseDate = (value: string) => parseISO(value);
 
-/** Fraction of peak power drawn during setup phase (not yet at full test load) */
-const SETUP_POWER_FACTOR = 0.25;
-/** Fraction of peak power drawn during cooldown phase */
-const COOLDOWN_POWER_FACTOR = 0.2;
+// Re-exported so existing imports from the engine keep working.
+export { powerAtOffset, powerForAssignmentAt };
 export const toIsoLocal = (date: Date) => format(date, "yyyy-MM-dd'T'HH:mm:ss");
 export const formatDate = (value: string) => format(parseDate(value), "dd MMM");
 export const formatDateTime = (value: string) => format(parseDate(value), "dd MMM HH:mm");
@@ -121,35 +127,6 @@ export function isBenchCompatible(item: TestItem, bench: TestBench) {
   return minProfilePower >= benchMin - 0.05 && maxProfilePower <= bench.maxPowerMW + 0.05;
 }
 
-export function powerAtOffset(profile: PowerProfilePoint[], offsetMinutes: number) {
-  const sorted = [...profile].sort((a, b) => a.offsetMinutes - b.offsetMinutes);
-  let active = sorted[0]?.powerMW ?? 0;
-  for (const point of sorted) {
-    if (point.offsetMinutes <= offsetMinutes) active = point.powerMW;
-    else break;
-  }
-  return active;
-}
-
-export function powerForAssignmentAt(
-  assignment: ScheduleAssignment,
-  item: TestItem | undefined,
-  at: Date,
-) {
-  if (!item) return 0;
-  const start = parseDate(assignment.start);
-  const end = parseDate(assignment.end);
-  if (isBefore(at, start) || !isBefore(at, end)) return 0;
-  const minutes = differenceInMinutes(at, start);
-  if (minutes < item.setupTimeMinutes)
-    return Math.sign(powerAtOffset(item.expectedPowerProfile, 0)) * SETUP_POWER_FACTOR;
-  const testOffset = minutes - item.setupTimeMinutes;
-  const testMinutes = Math.round(item.estimatedDurationHours * 60);
-  if (testOffset > testMinutes)
-    return Math.sign(powerAtOffset(item.expectedPowerProfile, testMinutes)) * COOLDOWN_POWER_FACTOR;
-  return powerAtOffset(item.expectedPowerProfile, testOffset);
-}
-
 export function integrateProfileMWh(item: TestItem, stepMinutes = 30) {
   const totalMinutes = totalTestMinutes(item);
   let generated = 0;
@@ -157,11 +134,11 @@ export function integrateProfileMWh(item: TestItem, stepMinutes = 30) {
   for (let minute = 0; minute < totalMinutes; minute += stepMinutes) {
     let power = 0;
     if (minute < item.setupTimeMinutes) {
-      power = Math.sign(powerAtOffset(item.expectedPowerProfile, 0)) * SETUP_POWER_FACTOR;
+      power = Math.sign(powerAtOffset(item.expectedPowerProfile, 0)) * SETUP_POWER_MW;
     } else if (minute > item.setupTimeMinutes + item.estimatedDurationHours * 60) {
       power =
         Math.sign(powerAtOffset(item.expectedPowerProfile, item.estimatedDurationHours * 60)) *
-        COOLDOWN_POWER_FACTOR;
+        COOLDOWN_POWER_MW;
     } else {
       power = powerAtOffset(item.expectedPowerProfile, minute - item.setupTimeMinutes);
     }
@@ -172,24 +149,28 @@ export function integrateProfileMWh(item: TestItem, stepMinutes = 30) {
   return { generated, consumed };
 }
 
+/** Grid flow at `at` (+ export, − import). Thin wrapper — the formula lives in energy-balance.ts. */
 export function gridFlowAt(
   assignments: ScheduleAssignment[],
   items: TestItem[],
+  resources: PlantResource[],
   constraint: EnergyConstraint,
   at: Date,
 ) {
-  const testPower = assignments.reduce((sum, assignment) => {
-    const item = items.find((candidate) => candidate.id === assignment.testItemId);
-    return sum + powerForAssignmentAt(assignment, item, at);
-  }, 0);
-  return testPower - constraint.facilityBaseLoadMW;
+  return plantBalanceAt({ assignments, items, resources, constraint }, at).gridMW;
 }
 
 export function buildEnergyForecast(state: UtiliqState, day = parseDate(nowIso())) {
   const date = startOfDay(day);
   return Array.from({ length: 24 }, (_, hour) => {
     const at = addMinutes(date, hour * 60);
-    const gridMW = gridFlowAt(state.assignments, state.testItems, state.energyConstraint, at);
+    const gridMW = gridFlowAt(
+      state.assignments,
+      state.testItems,
+      state.resources,
+      state.energyConstraint,
+      at,
+    );
     const exportCap = state.energyConstraint.maxGridExportMW;
     const importCap = state.energyConstraint.maxGridImportMW;
     return {
@@ -206,6 +187,7 @@ export function getAssignmentWarnings(
   assignments: ScheduleAssignment[],
   items: TestItem[],
   benches: TestBench[],
+  resources: PlantResource[],
   constraint: EnergyConstraint,
 ) {
   const warnings: ScheduleWarning[] = [];
@@ -265,7 +247,7 @@ export function getAssignmentWarnings(
     isBefore(at, parseDate(assignment.end));
     at = addMinutes(at, 30)
   ) {
-    const flow = gridFlowAt(assignments, items, constraint, at);
+    const flow = gridFlowAt(assignments, items, resources, constraint, at);
     maxExport = Math.max(maxExport, flow);
     maxImport = Math.max(maxImport, -flow);
   }
@@ -362,6 +344,7 @@ function scoreSlot(
   candidate: ScheduleAssignment,
   assignments: ScheduleAssignment[],
   items: TestItem[],
+  resources: PlantResource[],
   constraint: EnergyConstraint,
   settings: OptimizationSettings,
 ) {
@@ -381,7 +364,7 @@ function scoreSlot(
   let curtailment = 0;
   let energyCost = 0;
   for (let at = parseDate(candidate.start); isBefore(at, end); at = addMinutes(at, 30)) {
-    const flow = gridFlowAt([...assignments, candidate], items, constraint, at);
+    const flow = gridFlowAt([...assignments, candidate], items, resources, constraint, at);
     exportViolation += Math.max(0, flow - constraint.maxGridExportMW);
     importViolation += Math.max(0, -flow - constraint.maxGridImportMW);
     curtailment += Math.max(0, flow - constraint.maxGridExportMW) * 0.5;
@@ -419,6 +402,7 @@ function buildExplanation(
   candidate: ScheduleAssignment,
   assignments: ScheduleAssignment[],
   items: TestItem[],
+  resources: PlantResource[],
   constraint: EnergyConstraint,
 ) {
   const end = parseDate(candidate.end);
@@ -427,7 +411,7 @@ function buildExplanation(
   for (let at = parseDate(candidate.start); isBefore(at, end); at = addMinutes(at, 30)) {
     peakExport = Math.max(
       peakExport,
-      gridFlowAt([...assignments, candidate], items, constraint, at),
+      gridFlowAt([...assignments, candidate], items, resources, constraint, at),
     );
   }
   const reasons = [
@@ -492,6 +476,7 @@ export function autoSchedule(state: UtiliqState, selectedIds?: string[]) {
           candidate,
           assignments,
           items,
+          state.resources,
           state.energyConstraint,
           state.optimizationSettings,
         );
@@ -506,6 +491,7 @@ export function autoSchedule(state: UtiliqState, selectedIds?: string[]) {
           [...assignments, best.assignment],
           items,
           state.benches,
+          state.resources,
           state.energyConstraint,
         ),
         optimizationReason: buildExplanation(
@@ -514,6 +500,7 @@ export function autoSchedule(state: UtiliqState, selectedIds?: string[]) {
           best.assignment,
           assignments,
           items,
+          state.resources,
           state.energyConstraint,
         ),
       };
@@ -540,6 +527,7 @@ export function autoSchedule(state: UtiliqState, selectedIds?: string[]) {
       assignments,
       items,
       state.benches,
+      state.resources,
       state.energyConstraint,
     ),
   }));
@@ -575,7 +563,13 @@ export function calculateImpact(state: UtiliqState) {
   let estimatedSavingsEUR = 0;
 
   for (let at = horizonStart; isBefore(at, horizonEnd); at = addMinutes(at, 30)) {
-    const flow = gridFlowAt(state.assignments, state.testItems, state.energyConstraint, at);
+    const flow = gridFlowAt(
+      state.assignments,
+      state.testItems,
+      state.resources,
+      state.energyConstraint,
+      at,
+    );
     peakExport = Math.max(peakExport, flow);
     peakImport = Math.max(peakImport, -flow);
     curtailedMWh += Math.max(0, flow - state.energyConstraint.maxGridExportMW) * 0.5;
@@ -650,7 +644,13 @@ export function calculateKpis(state: UtiliqState) {
       differenceInMinutes(parseDate(item.deadline), now) < 48 * 60,
   ).length;
   const impact = calculateImpact(state);
-  const currentGrid = gridFlowAt(state.assignments, state.testItems, state.energyConstraint, now);
+  const currentGrid = gridFlowAt(
+    state.assignments,
+    state.testItems,
+    state.resources,
+    state.energyConstraint,
+    now,
+  );
   const gridHeadroom =
     currentGrid >= 0
       ? state.energyConstraint.maxGridExportMW - currentGrid
@@ -712,20 +712,22 @@ export function createRecordFromAssignment(
     ...state,
     records: [record, ...state.records],
     assignments: state.assignments.filter((candidate) => candidate.id !== assignment.id),
-    testItems: state.testItems.map((candidate) =>
-      candidate.id === item.id
-        ? {
-            ...candidate,
-            status: outcome === "pass" ? "completed" : "failed",
-            actualEnd: now,
-            testResult: outcome === "pass" ? "pass" : "fail",
-          }
-        : candidate,
+    testItems: state.testItems.map(
+      (candidate): TestItem =>
+        candidate.id === item.id
+          ? {
+              ...candidate,
+              status: outcome === "pass" ? "completed" : "failed",
+              actualEnd: now,
+              testResult: outcome === "pass" ? "pass" : "fail",
+            }
+          : candidate,
     ),
-    benches: state.benches.map((bench) =>
-      bench.id === assignment.benchId
-        ? { ...bench, status: "available", currentTestItemId: undefined }
-        : bench,
+    benches: state.benches.map(
+      (bench): TestBench =>
+        bench.id === assignment.benchId
+          ? { ...bench, status: "available", currentTestItemId: undefined }
+          : bench,
     ),
   };
 }
