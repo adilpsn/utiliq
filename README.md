@@ -5,7 +5,7 @@ unit goes on which test bench and when, with the plant's grid limit, on-site
 generation and day-ahead spot prices treated as first-class scheduling
 constraints rather than afterthoughts.
 
-Built for a pilot with **2G Energy**. Private repo — see *Confidentiality* below.
+Built for a pilot with **2G Energy**. Private repo — see _Confidentiality_ below.
 
 ---
 
@@ -13,10 +13,10 @@ Built for a pilot with **2G Energy**. Private repo — see *Confidentiality* bel
 
 This is **two things at once**, and the distinction matters:
 
-| | What it is | State |
-|---|---|---|
-| **The app** | 9 routes, full UI, scheduling + optimiser engine | Working, but running on **mocked data only** |
-| **The ingest path** | Live sensor telemetry via MQTT | **Scaffolded, off by default.** No live data has ever flowed from a real broker. |
+|                     | What it is                                       | State                                                                            |
+| ------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| **The app**         | 9 routes, full UI, scheduling + optimiser engine | Working, but running on **mocked data only**                                     |
+| **The ingest path** | Live sensor telemetry via MQTT                   | **Scaffolded, off by default.** No live data has ever flowed from a real broker. |
 
 Nothing here talks to a real plant yet. Every number on screen comes from
 `src/lib/utiliq-demo-data.ts`. Treat the UI as a high-fidelity click-dummy whose
@@ -24,23 +24,25 @@ engine happens to be real.
 
 ## Branches
 
-| Ref | Meaning |
-|---|---|
-| `main` | Frozen at the demo build. Do not develop here while the pilot demo is live. |
-| **`v2/telemetry-scaffold`** | **Active development.** The ingest path. Start here. |
-| tag `clickdummy-v1` | The exact commit demoed to 2G. Permanent anchor — never move it. |
+| Ref                         | Meaning                                                                     |
+| --------------------------- | --------------------------------------------------------------------------- |
+| `main`                      | Frozen at the demo build. Do not develop here while the pilot demo is live. |
+| **`v2/telemetry-scaffold`** | **Active development.** The ingest path. Start here.                        |
+| tag `clickdummy-v1`         | The exact commit demoed to 2G. Permanent anchor — never move it.            |
 
-The v2 branch is a strict superset of `main`: with no `.env`, all 9 routes render
-character-for-character identically to `clickdummy-v1`. That was verified by
-diffing rendered HTML, not by assumption, so you can develop on v2 without
-endangering a demo.
+With no `.env`, v2 keeps the telemetry path off and renders the same 9 routes as
+`clickdummy-v1`, but the energy numbers **intentionally differ**: v2 fixed the
+grid-flow formula (see _Energy model_), so the Command Center grid reads 4.0 MW
+import instead of 1.4 MW, and forecast, warnings, auto-schedule scoring and the
+"Est. schedule value" KPI shift with it. For the demo build, use `main` or
+`clickdummy-v1`.
 
 ## Quick start
 
 ```bash
 git clone <this repo>
 cd Utiliq_codebase
-npm install --legacy-peer-deps    # the flag is required — see Known issues #1
+npm install
 npm run dev
 ```
 
@@ -63,7 +65,9 @@ stale sensors flagged, and the unmapped/unparsable trays filling with the
 deliberately-unrecognised lines in `collector/sample-dump.txt`.
 
 ```bash
-npm run test:telemetry            # 51 assertions, no test runner needed
+npm test                          # both suites, no test runner needed
+npm run test:engine               # 29 assertions — engine + energy balance
+npm run test:telemetry            # 51 assertions — telemetry parser
 ```
 
 ## Architecture, in one diagram
@@ -93,12 +97,42 @@ as data. So a wrong guess about the broker costs one file or one table row — n
 a rewrite. Full detail, including the seven open assumptions, in
 [`V2-TELEMETRY.md`](./V2-TELEMETRY.md).
 
+## Energy model & open assumptions
+
+One formula, in `src/lib/energy-balance.ts` → `plantBalanceAt()`, used by every
+page, the forecast, warnings, the scheduler and KPIs:
+
+```
+gridMW = benches + on-site + battery − base load      (+ = export, − = import)
+```
+
+Every resource is signed the same way: + supplies the plant bus, − draws from
+it. `resourcePowerMW()` owns the battery sign rule. Open assumptions, to confirm
+with the plant — none of these are settled:
+
+- **Base load double-count?** `facilityBaseLoadMW` (1.4 MW) is plant-wide, while
+  the chiller (0.9 MW) and compressor (0.6 MW) are also separate resources.
+- **Persistence.** PV, loads and battery have no time profile; forecasts hold
+  their current value all day (PV stays constant overnight).
+- **Battery** ignores state of charge and capacity; direction comes from the
+  `status` string.
+- **Setup/cooldown power** is a fixed 0.25 / 0.2 MW (`SETUP_POWER_MW` /
+  `COOLDOWN_POWER_MW`), not scaled to the unit.
+- **A third energy formula remains.** `createRecordFromAssignment` in
+  `utiliq-engine.ts` uses 0.45 × base load and hard-coded 62/126/90 €/MWh,
+  ignoring the price profile. Left as-is on purpose: changing it changes what
+  historical records mean.
+- **Standby resources count.** A `standby` resource with non-zero `currentMW`
+  still contributes to the balance.
+
 ## Layout
 
 ```
 src/routes/          one file per page (TanStack Router, file-based)
 src/lib/
   utiliq-engine.ts   scheduling, warnings, energy forecast — the real logic
+  utiliq-engine.test.ts  engine + energy-balance tests (npm run test:engine)
+  energy-balance.ts  plantBalanceAt() — the one grid-flow formula
   spot-market.ts     day-ahead price analysis
   utiliq-store.tsx   app state, persisted to localStorage
   utiliq-demo-data.ts  ALL mocked data lives here
@@ -109,26 +143,21 @@ collector/           standalone MQTT→SSE bridge, plain Node, no build step
 
 ## Known issues — please read before filing
 
-1. **`npm install` fails with ERESOLVE.** The pinned `nitro` devDependency
-   conflicts. Use `--legacy-peer-deps`. A real fix is bumping `nitro` to
-   `>=3.0.260603-beta` and committing the lockfile — worth doing.
-2. **Two competing grid-flow formulas.** `utiliq-engine.ts` and
-   `live-energy.tsx` compute the plant's grid flow differently, so the Command
-   Center and the Live Energy page can disagree. This is the highest-priority
-   correctness bug in the repo. Fix by deleting one and calling the other.
-3. **State is persisted to `localStorage` by JSON-stringifying the whole store**
+1. **State is persisted to `localStorage` by JSON-stringifying the whole store**
    on every change. Fine for a demo, will not survive real data volumes. This is
-   why live readings deliberately live in a *separate* provider
+   why live readings deliberately live in a _separate_ provider
    (`telemetry/live-store.tsx`) and never enter the persisted store.
-4. **The warning engine is O(n²)** over scheduled items and re-runs on every
+2. **The warning engine is O(n²)** over scheduled items and re-runs on every
    store change. Fine at 6 items, not at 600.
-5. **Two lockfiles** — `package-lock.json` and `bun.lock`. Pick one and delete
-   the other.
-6. **Two pre-existing `tsc` errors** (`utiliq-store.tsx:186`,
-   `live-energy.tsx:395`). Untouched deliberately; both are demo-path code. The
-   telemetry code is type-clean.
-7. **No tests outside the telemetry parser.** The scheduling engine — the most
-   valuable logic here — has none.
+
+Fixed in v2:
+
+- `npm install` ERESOLVE — `@lovable.dev/vite-tanstack-config` pinned to 2.3.1;
+  no `--legacy-peer-deps` needed.
+- Two competing grid-flow formulas — both pages now call `plantBalanceAt()`.
+- Two lockfiles — `bun.lock` removed; npm only (`bunfig.toml` kept).
+- Two `tsc` errors — `npx tsc --noEmit` is clean.
+- No engine tests — `src/lib/utiliq-engine.test.ts`, 29 assertions.
 
 ## Where to start
 
@@ -138,8 +167,9 @@ If you are picking this up cold, in order:
 2. Read `V2-TELEMETRY.md` — it is short and explains the ingest design and the
    seven assumptions still open with 2G.
 3. Run the collector + `/telemetry` and watch data flow.
-4. Fix known issue #2 (the grid-flow contradiction). Small, self-contained, and
-   it unblocks wiring live values into the demo pages.
+4. Read `src/lib/energy-balance.ts` and _Energy model & open assumptions_
+   above — the grid formula every page uses, and what still needs confirming
+   with the plant before live values are wired into the demo pages.
 5. Read `src/lib/utiliq-engine.ts`. It is the heart of the product and the least
    documented part.
 
@@ -147,7 +177,8 @@ If you are picking this up cold, in order:
 
 - TypeScript, React 19, TanStack Start/Router, Tailwind + shadcn/ui.
 - `npm run format` (Prettier) and `npm run lint` before committing. Both are
-  wired; the lint baseline has 8 pre-existing errors, all in files listed above.
+  wired; the lint baseline has 3 pre-existing errors (Prettier formatting in
+  `src/routes/floor-layout.tsx`).
 - Timestamps: **UTC ISO-8601 with an explicit offset**, everywhere, at every
   boundary. The demo path still uses offset-less local strings in places; do not
   copy that pattern into new code.

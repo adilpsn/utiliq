@@ -8,8 +8,8 @@ Three views of the same system, from coarse to fine:
    the current greedy scheduler.
 
 Legend: solid arrow = always on · dashed arrow = live telemetry path, off unless
-`VITE_TELEMETRY=1` · orange = planned, not built yet · red box = has a known issue
-(see README *Known issues*).
+`VITE_TELEMETRY=1` · dotted arrow from a test = what it covers · orange =
+planned, not built yet.
 
 ---
 
@@ -24,7 +24,7 @@ flowchart LR
 
     COLL["Collector<br/>edge bridge, Node"]
     INGEST["Ingest<br/>parse → map → live store"]
-    ENGINE["Engine<br/>schedule · warnings ·<br/>energy forecast · spot market"]
+    ENGINE["Engine<br/>schedule · warnings · forecast · spot market<br/>one shared energy balance"]
     STATE["App state<br/>persisted to localStorage"]
     UI["UI<br/>React pages"]
 
@@ -70,7 +70,8 @@ flowchart LR
     end
 
     subgraph ENG["Engine — src/lib/"]
-        E1["utiliq-engine.ts<br/>autoSchedule() — greedy<br/>getAssignmentWarnings()<br/>buildEnergyForecast() · gridFlowAt()<br/>calculateKpis() · calculateImpact()<br/>collectAlerts()<br/>⚠ no tests"]
+        EB["energy-balance.ts<br/>plantBalanceAt() · resourcePowerMW()<br/>powerForAssignmentAt()<br/>the one grid-flow formula"]
+        E1["utiliq-engine.ts<br/>autoSchedule() — greedy<br/>getAssignmentWarnings()<br/>buildEnergyForecast() · gridFlowAt()<br/>calculateKpis() · calculateImpact()<br/>collectAlerts()"]
         E2["spot-market.ts<br/>analyzeSpotMarket()"]
         E3["clock.ts<br/>single source of now"]
         E4["utiliq-types.ts"]
@@ -84,10 +85,15 @@ flowchart LR
         R1["index.tsx<br/>Command Center"]
         R2["queue.tsx"]
         R3["schedule.tsx"]
-        R4["live-energy.tsx<br/>⚠ own grid-flow formula,<br/>disagrees with gridFlowAt()"]
+        R4["live-energy.tsx<br/>Live Energy"]
         R5["analysis.tsx"]
         R6["telemetry.tsx"]
         R7["records · history ·<br/>resources · assets ·<br/>floor-layout · settings"]
+    end
+
+    subgraph TST["Tests — npm test"]
+        X1["utiliq-engine.test.ts"]
+        X2["telemetry/parse.test.ts"]
     end
 
     D1 --> S1
@@ -95,6 +101,8 @@ flowchart LR
     S1 <--> E1
     E3 --> E1
     E3 --> E2
+    EB -- "gridFlowAt()" --> E1
+    EB --> R4
     S1 --> UI
 
     E1 --> R1
@@ -107,11 +115,13 @@ flowchart LR
     C2 -. SSE .-> T1
     T4 -.-> R6
 
-    classDef bug fill:#fde8e8,stroke:#c0392b,color:#7b1d1d
-    class E1,R4 bug
+    X1 -.-> E1
+    X1 -.-> EB
+    X2 -.-> T2
 ```
 
-Where to look first: `utiliq-engine.ts` is the heart of the product.
+Where to look first: `utiliq-engine.ts` is the heart of the product;
+`energy-balance.ts` is the only place grid flow is computed.
 `parse.ts` and `mapping.ts` are the only files that need to change once the
 real broker format is known.
 
@@ -138,7 +148,7 @@ flowchart LR
     INGEST["Ingest<br/>parse → map → live store"]
 
     subgraph ENG["Engine — TypeScript"]
-        PREP["build model input<br/>items · benches · grid limit ·<br/>prices · effectiveWeights()"]
+        PREP["build model input<br/>items · benches · grid limit · prices ·<br/>on-site resources via plantBalanceAt() ·<br/>effectiveWeights()"]
         CALL["solve server function<br/>createServerFn"]
         GREEDY["autoSchedule()<br/>greedy fallback"]
         WARN["getAssignmentWarnings()<br/>forecast · KPIs"]
@@ -172,15 +182,15 @@ flowchart LR
 
 **Model sketch**
 
-| | |
-|---|---|
-| Decision | `x[u,b,t] = 1` if unit *u* starts on bench *b* in slot *t* |
-| Each unit once | Σ<sub>b,t</sub> x[u,b,t] = 1 (or ≤ 1 with a penalty for leaving a unit unscheduled) |
-| Compatibility | x = 0 wherever `isBenchCompatible(u, b)` is false |
-| No overlap | at most one running test per bench per slot |
-| Grid limit | Σ test power(t) − on-site generation(t) ≤ grid import limit, every slot |
-| Deadlines | lateness ≥ end − deadline, penalised |
-| Objective | minimise spot-price energy cost + lateness + curtailment, weighted by `effectiveWeights()` |
+|                |                                                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Decision       | `x[u,b,t] = 1` if unit _u_ starts on bench _b_ in slot _t_                                                                                                    |
+| Each unit once | Σ<sub>b,t</sub> x[u,b,t] = 1 (or ≤ 1 with a penalty for leaving a unit unscheduled)                                                                           |
+| Compatibility  | x = 0 wherever `isBenchCompatible(u, b)` is false                                                                                                             |
+| No overlap     | at most one running test per bench per slot                                                                                                                   |
+| Grid limit     | −import limit ≤ Σ test power(t) + net on-site power(t) − base load ≤ export limit, every slot; net on-site power (PV, loads, battery) from the energy balance |
+| Deadlines      | lateness ≥ end − deadline, penalised                                                                                                                          |
+| Objective      | minimise spot-price energy cost + lateness + curtailment, weighted by `effectiveWeights()`                                                                    |
 
 **Rollout:** keep `autoSchedule()` as the fallback and add the optimiser behind
 a flag, the same way `VITE_TELEMETRY` gates live ingest. Compare both schedules
